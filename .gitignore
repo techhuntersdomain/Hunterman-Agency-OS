@@ -13,6 +13,9 @@
 # testing
 /coverage
 
+# playwright / browser-automation artifacts (snapshots, console logs)
+/.playwright-mcp/
+
 # next.js
 /.next/
 /out/

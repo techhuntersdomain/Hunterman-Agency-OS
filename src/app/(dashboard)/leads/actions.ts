@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { runBusinessResearch } from "@/lib/agents/research/business-researcher";
+import { scoreLead } from "@/lib/agents/research/lead-scorer";
 import type { Database, LeadStatus } from "@/types/database";
 
 export type ActionResult = { ok: boolean; error?: string };
@@ -172,6 +174,78 @@ export async function deleteLead(id: string): Promise<ActionResult> {
     };
   }
 
+  refreshLeadsViews();
+  return { ok: true };
+}
+
+/**
+ * Runs the business-researcher + lead-scorer for a single lead, then persists
+ * the results: replaces the lead's business_research record, updates
+ * leads.score and leads.status, and logs the run to activity_log.
+ * Internal-only — no external contact, no approval gate.
+ */
+export async function runLeadResearch(id: string): Promise<ActionResult> {
+  if (!id) return { ok: false, error: "Missing lead id." };
+
+  let supabase: ReturnType<typeof createAdminClient>;
+  try {
+    supabase = createAdminClient();
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Supabase is not configured.",
+    };
+  }
+
+  // 1. Fetch the lead.
+  const { data: lead, error: leadError } = await supabase
+    .from("leads")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (leadError) return { ok: false, error: leadError.message };
+  if (!lead) return { ok: false, error: "Lead not found." };
+
+  // 2. Research + score (deterministic, available-data only).
+  const findings = await runBusinessResearch(lead);
+  const { score, status, rationale } = scoreLead(lead, findings);
+
+  // 3. Replace the lead's research record (one current record per lead).
+  const researchRow: Database["public"]["Tables"]["business_research"]["Insert"] =
+    {
+      lead_id: id,
+      current_website: findings.current_website,
+      has_website: findings.has_website,
+      google_rating: findings.google_rating,
+      review_count: findings.review_count,
+      competitors: findings.competitors,
+      market_notes: findings.market_notes,
+      tech_stack: findings.tech_stack,
+    };
+  await supabase.from("business_research").delete().eq("lead_id", id);
+  const { error: researchError } = await supabase
+    .from("business_research")
+    .insert(researchRow);
+  if (researchError) return { ok: false, error: researchError.message };
+
+  // 4. Update the lead's score + status.
+  const { error: updateError } = await supabase
+    .from("leads")
+    .update({ score, status })
+    .eq("id", id);
+  if (updateError) return { ok: false, error: updateError.message };
+
+  // 5. Log the run (best-effort; a logging failure shouldn't fail the action).
+  const activityRow: Database["public"]["Tables"]["activity_log"]["Insert"] = {
+    entity_type: "lead",
+    entity_id: id,
+    action: "research_completed",
+    actor: "business-researcher",
+    details: { score, status, rationale, data_sources: findings.data_sources },
+  };
+  await supabase.from("activity_log").insert(activityRow);
+
+  revalidatePath(`/leads/${id}`);
   refreshLeadsViews();
   return { ok: true };
 }

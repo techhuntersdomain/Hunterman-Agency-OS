@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { getLeadDetail } from "@/lib/leads";
 import { statusColors, formatStatus } from "@/lib/lead-status";
 import { EditLeadDialog } from "./edit-lead-dialog";
+import { RunResearchButton } from "./run-research-button";
 
 // Read live from Supabase on every request.
 export const dynamic = "force-dynamic";
@@ -147,7 +148,10 @@ export default async function LeadDetailPage({
             {lead.score !== null ? ` · Score ${lead.score}/100` : ""}
           </p>
         </div>
-        <EditLeadDialog lead={lead} />
+        <div className="flex items-start gap-2">
+          <RunResearchButton leadId={lead.id} />
+          <EditLeadDialog lead={lead} />
+        </div>
       </div>
 
       {/* Overview */}
@@ -211,7 +215,7 @@ export default async function LeadDetailPage({
       <RelatedCard
         title="Business Research"
         count={research.length}
-        empty="No research recorded for this lead yet. (The research agent isn't built yet.)"
+        empty="No research recorded for this lead yet. Click Run Research to gather it."
       >
         <Table>
           <TableHeader>
