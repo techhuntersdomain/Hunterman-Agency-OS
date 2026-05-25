@@ -28,6 +28,8 @@ function field(formData: FormData, name: string): string | null {
 
 function refreshLeadsViews() {
   revalidatePath("/leads");
+  revalidatePath("/pipeline");
+  revalidatePath("/workflows");
   revalidatePath("/health");
   revalidatePath("/");
 }

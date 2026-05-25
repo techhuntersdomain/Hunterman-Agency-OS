@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { Database } from "@/types/database";
+import { STATUS_OPTIONS } from "@/lib/lead-status";
+import type { Database, LeadStatus } from "@/types/database";
 
 export type Lead = Database["public"]["Tables"]["leads"]["Row"];
 export type BusinessResearch =
@@ -38,6 +39,39 @@ export async function getLeads(): Promise<LeadsResult> {
     return {
       data: [],
       error: e instanceof Error ? e.message : "Unknown error reading leads.",
+    };
+  }
+}
+
+export type LeadStats = {
+  total: number;
+  byStatus: Record<LeadStatus, number>;
+  /** Exact error message when the read fails; null on success. */
+  error: string | null;
+};
+
+/** Counts leads by status (and total). Never throws. */
+export async function getLeadStats(): Promise<LeadStats> {
+  const byStatus = Object.fromEntries(
+    STATUS_OPTIONS.map((s) => [s, 0])
+  ) as Record<LeadStatus, number>;
+
+  try {
+    const supabase = createAdminClient();
+    const { data, error } = await supabase.from("leads").select("status");
+    if (error) return { total: 0, byStatus, error: error.message };
+    const rows = data ?? [];
+    for (const row of rows) {
+      const s = row.status as LeadStatus;
+      if (s in byStatus) byStatus[s] += 1;
+    }
+    return { total: rows.length, byStatus, error: null };
+  } catch (e) {
+    return {
+      total: 0,
+      byStatus,
+      error:
+        e instanceof Error ? e.message : "Unknown error reading lead stats.",
     };
   }
 }
