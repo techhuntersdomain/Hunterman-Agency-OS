@@ -15,6 +15,7 @@ import { getLeadDetail } from "@/lib/leads";
 import { statusColors, formatStatus } from "@/lib/lead-status";
 import { EditLeadDialog } from "./edit-lead-dialog";
 import { RunResearchButton } from "./run-research-button";
+import { CreateDemoDraftButton } from "./create-demo-draft-button";
 
 // Read live from Supabase on every request.
 export const dynamic = "force-dynamic";
@@ -174,6 +175,7 @@ export default async function LeadDetailPage({
         </div>
         <div className="flex items-start gap-2">
           <RunResearchButton leadId={lead.id} />
+          <CreateDemoDraftButton leadId={lead.id} />
           <EditLeadDialog lead={lead} />
         </div>
       </div>
@@ -286,8 +288,8 @@ export default async function LeadDetailPage({
             <TableRow>
               <TableHead>Template</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead>URL</TableHead>
-              <TableHead>Created</TableHead>
+              <TableHead>Generated</TableHead>
+              <TableHead>Preview</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -295,22 +297,18 @@ export default async function LeadDetailPage({
               <TableRow key={d.id}>
                 <TableCell className="text-sm">{d.template || "—"}</TableCell>
                 <TableCell className="text-sm">{d.status}</TableCell>
-                <TableCell className="text-sm">
-                  {d.url ? (
-                    <a
-                      className="underline"
-                      href={d.url}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {d.url}
-                    </a>
-                  ) : (
-                    "—"
-                  )}
-                </TableCell>
                 <TableCell className="text-sm text-muted-foreground">
-                  {fmtDate(d.created_at)}
+                  {fmtDate(d.generated_at ?? d.created_at)}
+                </TableCell>
+                <TableCell className="text-sm">
+                  <a
+                    className="underline"
+                    href={`/demo-sites/${d.id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open preview
+                  </a>
                 </TableCell>
               </TableRow>
             ))}

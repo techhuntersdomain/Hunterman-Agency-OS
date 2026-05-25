@@ -10,6 +10,7 @@ import {
   addWorkflowStep,
   finishWorkflow,
 } from "@/lib/workflows";
+import { chooseTemplate, buildDemoContent } from "@/lib/demo-templates";
 import type { Database, Json, LeadStatus } from "@/types/database";
 
 export type ActionResult = { ok: boolean; error?: string };
@@ -375,6 +376,145 @@ export async function runLeadResearch(id: string): Promise<ActionResult> {
       status,
       research_id: researchId,
       data_sources: findings.data_sources,
+    });
+  }
+
+  revalidatePath(`/leads/${id}`);
+  refreshLeadsViews();
+  return { ok: true };
+}
+
+/**
+ * Creates a v1 demo-site *draft* for a lead: picks a niche template from the
+ * lead's industry, records a `demo_sites` row (status `ready`, no external
+ * deployment), and tracks the run in the workflow layer (workflow + a
+ * demo-site-generator step) plus activity_log. Internal-only — nothing is sent
+ * to the lead and no public site is published. No business facts are invented;
+ * the draft renders from real lead/research data + generic template copy.
+ */
+export async function createDemoDraft(id: string): Promise<ActionResult> {
+  if (!id) return { ok: false, error: "Missing lead id." };
+
+  let supabase: ReturnType<typeof createAdminClient>;
+  try {
+    supabase = createAdminClient();
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Supabase is not configured.",
+    };
+  }
+
+  // 1. Fetch the lead + its latest research (research is optional context).
+  const { data: lead, error: leadError } = await supabase
+    .from("leads")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (leadError) return { ok: false, error: leadError.message };
+  if (!lead) return { ok: false, error: "Lead not found." };
+
+  const { data: research } = await supabase
+    .from("business_research")
+    .select("*")
+    .eq("lead_id", id)
+    .order("researched_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  // 2. Choose a template and build draft content (real data + template copy).
+  const template = chooseTemplate(lead.industry);
+  const content = buildDemoContent(lead, research ?? null, template);
+
+  // 3. Open a workflow for this run (best-effort; null if it can't be created).
+  const moduleId = await getModuleIdBySlug(supabase, "local-growth");
+  const workflowId = moduleId
+    ? await createWorkflow(supabase, {
+        moduleId,
+        leadId: id,
+        name: `Demo Draft — ${lead.business_name}`,
+        metadata: { trigger: "manual", pipeline: "demo-draft" },
+      })
+    : null;
+
+  async function failWith(error: string): Promise<ActionResult> {
+    if (workflowId) {
+      await finishWorkflow(supabase, workflowId, "failed", {
+        trigger: "manual",
+        pipeline: "demo-draft",
+        error,
+      });
+    }
+    return { ok: false, error };
+  }
+
+  // 4. Step 1 — demo-site-generator.
+  const s1Start = new Date().toISOString();
+  let generatorStepId: string | null = null;
+  if (workflowId) {
+    generatorStepId = await addWorkflowStep(supabase, {
+      workflowId,
+      stepName: "demo-site-generator",
+      stepOrder: 1,
+      agentType: "demo-site-generator",
+      status: "completed",
+      input: {
+        lead_id: id,
+        industry: lead.industry,
+        used_research: Boolean(research),
+      },
+      output: {
+        template: template.slug,
+        template_label: template.label,
+        section_count: content.services.length,
+        headline: content.heroHeadline,
+      } as Json,
+      startedAt: s1Start,
+      completedAt: new Date().toISOString(),
+    });
+  }
+
+  // 5. Create the demo_sites row (draft, ready, no external URL).
+  const demoRow: Database["public"]["Tables"]["demo_sites"]["Insert"] = {
+    lead_id: id,
+    workflow_id: workflowId,
+    url: null,
+    template: template.slug,
+    status: "ready",
+    preview_image: null,
+    generated_at: new Date().toISOString(),
+    expires_at: null,
+  };
+  const { data: demoInserted, error: demoError } = await supabase
+    .from("demo_sites")
+    .insert(demoRow)
+    .select("id")
+    .single();
+  if (demoError) return failWith(demoError.message);
+  const demoSiteId = demoInserted?.id ?? null;
+
+  // 6. Log the run (best-effort).
+  const activityRow: Database["public"]["Tables"]["activity_log"]["Insert"] = {
+    entity_type: "lead",
+    entity_id: id,
+    action: "demo_draft_created",
+    actor: "demo-site-generator",
+    details: {
+      template: template.slug,
+      demo_site_id: demoSiteId,
+      workflow_id: workflowId,
+      workflow_step_id: generatorStepId,
+    },
+  };
+  await supabase.from("activity_log").insert(activityRow);
+
+  // 7. Close the workflow, linking the produced draft.
+  if (workflowId) {
+    await finishWorkflow(supabase, workflowId, "completed", {
+      trigger: "manual",
+      pipeline: "demo-draft",
+      template: template.slug,
+      demo_site_id: demoSiteId,
     });
   }
 
