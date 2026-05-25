@@ -19,6 +19,23 @@ import { RunResearchButton } from "./run-research-button";
 // Read live from Supabase on every request.
 export const dynamic = "force-dynamic";
 
+const workflowStatusColors: Record<string, string> = {
+  pending: "bg-slate-100 text-slate-700",
+  running: "bg-blue-100 text-blue-700",
+  paused: "bg-amber-100 text-amber-700",
+  completed: "bg-emerald-100 text-emerald-700",
+  failed: "bg-red-100 text-red-700",
+  cancelled: "bg-gray-100 text-gray-700",
+};
+
+const stepStatusColors: Record<string, string> = {
+  pending: "bg-slate-100 text-slate-700",
+  in_progress: "bg-blue-100 text-blue-700",
+  completed: "bg-emerald-100 text-emerald-700",
+  failed: "bg-red-100 text-red-700",
+  skipped: "bg-gray-100 text-gray-700",
+};
+
 function fmtDate(value: string | null): string {
   if (!value) return "—";
   return new Date(value).toLocaleString();
@@ -124,8 +141,15 @@ export default async function LeadDetailPage({
     );
   }
 
-  const { lead, research, demoSites, outreachMessages, workflows, activity } =
-    detail;
+  const {
+    lead,
+    research,
+    demoSites,
+    outreachMessages,
+    workflows,
+    workflowSteps,
+    activity,
+  } = detail;
 
   return (
     <div className="space-y-6">
@@ -337,26 +361,56 @@ export default async function LeadDetailPage({
                 No workflows for this lead yet.
               </p>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Started</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {workflows.map((w) => (
-                    <TableRow key={w.id}>
-                      <TableCell className="text-sm">{w.name}</TableCell>
-                      <TableCell className="text-sm">{w.status}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {fmtDate(w.started_at)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <ul className="space-y-3">
+                {workflows.map((w) => {
+                  const steps = workflowSteps[w.id] ?? [];
+                  return (
+                    <li key={w.id} className="rounded-md border p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-medium">{w.name}</span>
+                        <Badge
+                          variant="secondary"
+                          className={cn(workflowStatusColors[w.status])}
+                        >
+                          {w.status}
+                        </Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Started {fmtDate(w.started_at)}
+                        {w.completed_at
+                          ? ` · Completed ${fmtDate(w.completed_at)}`
+                          : ""}
+                      </p>
+                      {steps.length > 0 && (
+                        <ul className="mt-2 space-y-1">
+                          {steps.map((s) => (
+                            <li
+                              key={s.id}
+                              className="flex items-center justify-between gap-2 text-sm"
+                            >
+                              <span>
+                                <span className="text-muted-foreground">
+                                  {s.step_order}.
+                                </span>{" "}
+                                {s.step_name}
+                                {s.agent_type && s.agent_type !== s.step_name
+                                  ? ` · ${s.agent_type}`
+                                  : ""}
+                              </span>
+                              <Badge
+                                variant="secondary"
+                                className={cn(stepStatusColors[s.status])}
+                              >
+                                {s.status}
+                              </Badge>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
             )}
           </div>
 

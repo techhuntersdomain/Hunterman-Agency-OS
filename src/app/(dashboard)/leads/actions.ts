@@ -4,7 +4,13 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { runBusinessResearch } from "@/lib/agents/research/business-researcher";
 import { scoreLead } from "@/lib/agents/research/lead-scorer";
-import type { Database, LeadStatus } from "@/types/database";
+import {
+  getModuleIdBySlug,
+  createWorkflow,
+  addWorkflowStep,
+  finishWorkflow,
+} from "@/lib/workflows";
+import type { Database, Json, LeadStatus } from "@/types/database";
 
 export type ActionResult = { ok: boolean; error?: string };
 
@@ -183,6 +189,11 @@ export async function deleteLead(id: string): Promise<ActionResult> {
  * the results: replaces the lead's business_research record, updates
  * leads.score and leads.status, and logs the run to activity_log.
  * Internal-only — no external contact, no approval gate.
+ *
+ * The run is also recorded in the OS workflow layer: a `workflows` row plus a
+ * `workflow_steps` row per agent (business-researcher, lead-scorer). Workflow
+ * tracking is best-effort observability — if any of it fails (e.g. module not
+ * seeded), the core research/score/persist path still completes unchanged.
  */
 export async function runLeadResearch(id: string): Promise<ActionResult> {
   if (!id) return { ok: false, error: "Missing lead id." };
@@ -206,11 +217,105 @@ export async function runLeadResearch(id: string): Promise<ActionResult> {
   if (leadError) return { ok: false, error: leadError.message };
   if (!lead) return { ok: false, error: "Lead not found." };
 
-  // 2. Research + score (deterministic, available-data only).
-  const findings = await runBusinessResearch(lead);
-  const { score, status, rationale } = scoreLead(lead, findings);
+  // 2. Open a workflow for this run (best-effort; null if it can't be created).
+  const moduleId = await getModuleIdBySlug(supabase, "local-growth");
+  const workflowId = moduleId
+    ? await createWorkflow(supabase, {
+        moduleId,
+        leadId: id,
+        name: `Lead Research — ${lead.business_name}`,
+        metadata: { trigger: "manual", pipeline: "research-only" },
+      })
+    : null;
 
-  // 3. Replace the lead's research record (one current record per lead).
+  // Marks the workflow failed (if one exists) and returns the error result.
+  async function failWith(error: string): Promise<ActionResult> {
+    if (workflowId) {
+      await finishWorkflow(supabase, workflowId, "failed", {
+        trigger: "manual",
+        pipeline: "research-only",
+        error,
+      });
+    }
+    return { ok: false, error };
+  }
+
+  // 3. Step 1 — business-researcher (deterministic, available-data only).
+  const s1Start = new Date().toISOString();
+  let findings: Awaited<ReturnType<typeof runBusinessResearch>>;
+  try {
+    findings = await runBusinessResearch(lead);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Research failed.";
+    if (workflowId) {
+      await addWorkflowStep(supabase, {
+        workflowId,
+        stepName: "business-researcher",
+        stepOrder: 1,
+        agentType: "business-researcher",
+        status: "failed",
+        input: { lead_id: id, website: lead.website },
+        output: { error: msg },
+        startedAt: s1Start,
+        completedAt: new Date().toISOString(),
+      });
+    }
+    return failWith(msg);
+  }
+  if (workflowId) {
+    await addWorkflowStep(supabase, {
+      workflowId,
+      stepName: "business-researcher",
+      stepOrder: 1,
+      agentType: "business-researcher",
+      status: "completed",
+      input: {
+        lead_id: id,
+        business_name: lead.business_name,
+        website: lead.website,
+        has_website: findings.has_website,
+      },
+      output: {
+        has_website: findings.has_website,
+        current_website: findings.current_website,
+        website_reachable: findings.website_reachable,
+        website_mobile_friendly: findings.website_mobile_friendly,
+        tech_stack: findings.tech_stack,
+        google_rating: findings.google_rating,
+        review_count: findings.review_count,
+        data_sources: findings.data_sources,
+      } as Json,
+      startedAt: s1Start,
+      completedAt: new Date().toISOString(),
+    });
+  }
+
+  // 4. Step 2 — lead-scorer.
+  const s2Start = new Date().toISOString();
+  const { score, status, rationale } = scoreLead(lead, findings);
+  if (workflowId) {
+    await addWorkflowStep(supabase, {
+      workflowId,
+      stepName: "lead-scorer",
+      stepOrder: 2,
+      agentType: "lead-scorer",
+      status: "completed",
+      input: {
+        has_website: findings.has_website,
+        website_reachable: findings.website_reachable,
+        website_mobile_friendly: findings.website_mobile_friendly,
+        industry: lead.industry,
+        location: lead.location,
+        has_phone: Boolean(lead.phone),
+        has_email: Boolean(lead.email),
+      },
+      output: { score, status, rationale } as Json,
+      startedAt: s2Start,
+      completedAt: new Date().toISOString(),
+    });
+  }
+
+  // 5. Replace the lead's research record (one current record per lead).
   const researchRow: Database["public"]["Tables"]["business_research"]["Insert"] =
     {
       lead_id: id,
@@ -223,27 +328,51 @@ export async function runLeadResearch(id: string): Promise<ActionResult> {
       tech_stack: findings.tech_stack,
     };
   await supabase.from("business_research").delete().eq("lead_id", id);
-  const { error: researchError } = await supabase
+  const { data: researchInserted, error: researchError } = await supabase
     .from("business_research")
-    .insert(researchRow);
-  if (researchError) return { ok: false, error: researchError.message };
+    .insert(researchRow)
+    .select("id")
+    .single();
+  if (researchError) return failWith(researchError.message);
+  const researchId = researchInserted?.id ?? null;
 
-  // 4. Update the lead's score + status.
+  // 6. Update the lead's score + status.
   const { error: updateError } = await supabase
     .from("leads")
     .update({ score, status })
     .eq("id", id);
-  if (updateError) return { ok: false, error: updateError.message };
+  if (updateError) return failWith(updateError.message);
 
-  // 5. Log the run (best-effort; a logging failure shouldn't fail the action).
+  // 7. Log the run (best-effort; a logging failure shouldn't fail the action).
+  //    business_research has no workflow_id column, so the link is carried in
+  //    the activity details and the workflow metadata instead.
   const activityRow: Database["public"]["Tables"]["activity_log"]["Insert"] = {
     entity_type: "lead",
     entity_id: id,
     action: "research_completed",
     actor: "business-researcher",
-    details: { score, status, rationale, data_sources: findings.data_sources },
+    details: {
+      score,
+      status,
+      rationale,
+      data_sources: findings.data_sources,
+      workflow_id: workflowId,
+      research_id: researchId,
+    },
   };
   await supabase.from("activity_log").insert(activityRow);
+
+  // 8. Close the workflow, linking the produced records.
+  if (workflowId) {
+    await finishWorkflow(supabase, workflowId, "completed", {
+      trigger: "manual",
+      pipeline: "research-only",
+      score,
+      status,
+      research_id: researchId,
+      data_sources: findings.data_sources,
+    });
+  }
 
   revalidatePath(`/leads/${id}`);
   refreshLeadsViews();

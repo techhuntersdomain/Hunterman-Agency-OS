@@ -9,6 +9,8 @@ export type DemoSite = Database["public"]["Tables"]["demo_sites"]["Row"];
 export type OutreachMessage =
   Database["public"]["Tables"]["outreach_messages"]["Row"];
 export type Workflow = Database["public"]["Tables"]["workflows"]["Row"];
+export type WorkflowStep =
+  Database["public"]["Tables"]["workflow_steps"]["Row"];
 export type ActivityEntry =
   Database["public"]["Tables"]["activity_log"]["Row"];
 
@@ -83,6 +85,8 @@ export type LeadDetail = {
   demoSites: DemoSite[];
   outreachMessages: OutreachMessage[];
   workflows: Workflow[];
+  /** Steps for the lead's workflows, keyed by workflow_id (ordered by step_order). */
+  workflowSteps: Record<string, WorkflowStep[]>;
   activity: ActivityEntry[];
   /** Exact error message when the lead read fails; null otherwise. */
   error: string | null;
@@ -93,6 +97,7 @@ const EMPTY_DETAIL: Omit<LeadDetail, "lead" | "error"> = {
   demoSites: [],
   outreachMessages: [],
   workflows: [],
+  workflowSteps: {},
   activity: [],
 };
 
@@ -151,12 +156,30 @@ export async function getLeadDetail(id: string): Promise<LeadDetail> {
           .limit(50),
       ]);
 
+    // Fetch steps for this lead's workflows (one query), grouped by workflow.
+    const workflowRows = workflows.data ?? [];
+    const workflowSteps: Record<string, WorkflowStep[]> = {};
+    if (workflowRows.length > 0) {
+      const { data: steps } = await supabase
+        .from("workflow_steps")
+        .select("*")
+        .in(
+          "workflow_id",
+          workflowRows.map((w) => w.id)
+        )
+        .order("step_order", { ascending: true });
+      for (const step of steps ?? []) {
+        (workflowSteps[step.workflow_id] ??= []).push(step);
+      }
+    }
+
     return {
       lead,
       research: research.data ?? [],
       demoSites: demoSites.data ?? [],
       outreachMessages: outreach.data ?? [],
-      workflows: workflows.data ?? [],
+      workflows: workflowRows,
+      workflowSteps,
       activity: activity.data ?? [],
       error: null,
     };
