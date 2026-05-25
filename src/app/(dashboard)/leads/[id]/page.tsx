@@ -152,6 +152,9 @@ export default async function LeadDetailPage({
     activity,
   } = detail;
 
+  // Lets the Demo Sites table show the linked workflow's status, when present.
+  const workflowById = new Map(workflows.map((w) => [w.id, w]));
+
   return (
     <div className="space-y-6">
       <BackLink />
@@ -288,30 +291,48 @@ export default async function LeadDetailPage({
             <TableRow>
               <TableHead>Template</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead>Workflow</TableHead>
               <TableHead>Generated</TableHead>
               <TableHead>Preview</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {demoSites.map((d) => (
-              <TableRow key={d.id}>
-                <TableCell className="text-sm">{d.template || "—"}</TableCell>
-                <TableCell className="text-sm">{d.status}</TableCell>
-                <TableCell className="text-sm text-muted-foreground">
-                  {fmtDate(d.generated_at ?? d.created_at)}
-                </TableCell>
-                <TableCell className="text-sm">
-                  <a
-                    className="underline"
-                    href={`/demo-sites/${d.id}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Open preview
-                  </a>
-                </TableCell>
-              </TableRow>
-            ))}
+            {demoSites.map((d) => {
+              const wf = d.workflow_id
+                ? workflowById.get(d.workflow_id)
+                : undefined;
+              return (
+                <TableRow key={d.id}>
+                  <TableCell className="text-sm">{d.template || "—"}</TableCell>
+                  <TableCell className="text-sm">{d.status}</TableCell>
+                  <TableCell className="text-sm">
+                    {wf ? (
+                      <Badge
+                        variant="secondary"
+                        className={cn(workflowStatusColors[wf.status])}
+                      >
+                        {wf.status}
+                      </Badge>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {fmtDate(d.generated_at ?? d.created_at)}
+                  </TableCell>
+                  <TableCell className="text-sm">
+                    <a
+                      className="underline"
+                      href={`/demo-sites/${d.id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open preview
+                    </a>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </RelatedCard>

@@ -49,12 +49,12 @@ export default async function DemoSitePreviewPage({
 
   return (
     <div className="min-h-full">
-      {/* Internal preview banner — not part of the rendered site */}
-      <div className="border-b border-amber-300 bg-amber-50 px-6 py-3 text-amber-900">
-        <div className="mx-auto flex max-w-4xl flex-col gap-1">
+      {/* Internal preview banner — sticky, not part of the rendered site */}
+      <div className="sticky top-0 z-10 border-b border-amber-300 bg-amber-50/95 px-6 py-3 text-amber-900 backdrop-blur">
+        <div className="mx-auto flex max-w-5xl flex-col gap-1">
           <div className="flex items-center justify-between gap-4">
             <span className="text-xs font-semibold uppercase tracking-wide">
-              Interner Entwurf · Private Preview · Vorlage: {template.label}
+              Interner Entwurf · Private Vorschau · Vorlage: {template.label}
             </span>
             <Link
               href={`/leads/${lead.id}`}

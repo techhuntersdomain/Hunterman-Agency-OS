@@ -3,12 +3,17 @@ import type { Lead, BusinessResearch } from "@/lib/leads";
 /**
  * v1 demo-site template registry.
  *
- * Each template is a thin, niche-specific scaffold — German trade label, a
- * generic tagline, and *industry-typical* service categories. It deliberately
+ * Each template is a niche-specific scaffold — German trade label, a generic
+ * persuasive pitch, and *industry-typical* service categories. It deliberately
  * does NOT assert facts about a specific business: services are framed as
  * "typical for this trade, to be confirmed", and any real values (name,
  * location, contact) are filled from lead/research data only. There is no AI
  * generation and no production site here yet.
+ *
+ * Copy guardrails — generic copy may sell trust, professionalism, local
+ * authority and easy contact, but must never invent: years in business, team
+ * size, certifications, ratings, reviews, awards, guarantees, or specific
+ * services not supported by the data.
  */
 export type DemoTemplate = {
   /** Stable key, also stored in demo_sites.template. */
@@ -19,8 +24,10 @@ export type DemoTemplate = {
   trade: string;
   /** Industry keywords (DE + EN) used to auto-select this template. */
   keywords: string[];
-  /** Generic German tagline for the hero subhead. */
+  /** Short generic German tagline (eyebrow / supporting line). */
   tagline: string;
+  /** Stronger generic German hero pitch — persuasive, no fabricated facts. */
+  heroPitch: string;
   /**
    * Industry-typical service categories (German). These are NOT claims that
    * this specific business offers them — the preview renders them under a
@@ -36,6 +43,8 @@ export const DEMO_TEMPLATES: DemoTemplate[] = [
     trade: "Reinigungsbetrieb",
     keywords: ["clean", "reinigung", "gebäudereinigung", "gebaeudereinigung"],
     tagline: "Zuverlässige Reinigung für Gewerbe und Privat.",
+    heroPitch:
+      "Saubere Räume ohne Aufwand – zuverlässige Reinigung für Gewerbe und Privat, persönlich abgestimmt.",
     typicalServices: [
       "Unterhaltsreinigung",
       "Grundreinigung",
@@ -49,6 +58,8 @@ export const DEMO_TEMPLATES: DemoTemplate[] = [
     trade: "Malerbetrieb",
     keywords: ["paint", "maler", "malerei", "anstrich", "lackier"],
     tagline: "Saubere Malerarbeiten für innen und außen.",
+    heroPitch:
+      "Frische Farbe, sauber umgesetzt – für Innenräume und Fassaden, mit Sorgfalt und festem Ansprechpartner.",
     typicalServices: [
       "Innenanstrich",
       "Fassadenanstrich",
@@ -62,6 +73,8 @@ export const DEMO_TEMPLATES: DemoTemplate[] = [
     trade: "Elektrobetrieb",
     keywords: ["electr", "elektr"],
     tagline: "Elektrotechnik vom Fachbetrieb.",
+    heroPitch:
+      "Elektroarbeiten vom Fachbetrieb – sicher und fachgerecht umgesetzt, von der Anfrage bis zur Abnahme.",
     typicalServices: [
       "Elektroinstallation",
       "Reparaturen & Störungsdienst",
@@ -75,6 +88,8 @@ export const DEMO_TEMPLATES: DemoTemplate[] = [
     trade: "Umzugsunternehmen",
     keywords: ["umzug", "moving", "transport", "spedition"],
     tagline: "Stressfrei umziehen – privat und gewerblich.",
+    heroPitch:
+      "Entspannt umziehen – sorgfältig geplant und zuverlässig umgesetzt, für Privat und Gewerbe.",
     typicalServices: [
       "Privatumzüge",
       "Firmenumzüge",
@@ -87,7 +102,9 @@ export const DEMO_TEMPLATES: DemoTemplate[] = [
     label: "Roofing / Dachdecker",
     trade: "Dachdeckerbetrieb",
     keywords: ["roof", "dach", "dachdecker", "bedachung"],
-    tagline: "Dacharbeiten vom Meisterbetrieb.",
+    tagline: "Dacharbeiten vom Fachbetrieb.",
+    heroPitch:
+      "Ein dichtes Dach in guten Händen – Eindeckung, Reparatur und Wartung vom Fachbetrieb.",
     typicalServices: [
       "Dacheindeckung",
       "Dachreparatur",
@@ -101,6 +118,8 @@ export const DEMO_TEMPLATES: DemoTemplate[] = [
     trade: "Garten- und Landschaftsbau",
     keywords: ["garten", "landscap", "galabau", "gala-bau"],
     tagline: "Gartengestaltung und -pflege aus einer Hand.",
+    heroPitch:
+      "Ihr Garten in guten Händen – Gestaltung und Pflege aus einer Hand, von der Planung bis zur Umsetzung.",
     typicalServices: [
       "Gartenpflege",
       "Pflasterarbeiten",
@@ -122,6 +141,8 @@ export const DEMO_TEMPLATES: DemoTemplate[] = [
       "shk",
     ],
     tagline: "Sanitär, Heizung und Klima vom Fachbetrieb.",
+    heroPitch:
+      "Wärme und Wasser, auf die Sie sich verlassen können – Sanitär und Heizung vom Fachbetrieb.",
     typicalServices: [
       "Sanitärinstallation",
       "Heizungsinstallation",
@@ -135,6 +156,8 @@ export const DEMO_TEMPLATES: DemoTemplate[] = [
     trade: "Dienstleistungsbetrieb",
     keywords: [],
     tagline: "Ihr zuverlässiger Partner aus der Region.",
+    heroPitch:
+      "Ein verlässlicher Partner aus Ihrer Region – persönlich, professionell und gut erreichbar.",
     typicalServices: ["Beratung", "Ausführung", "Service & Wartung"],
   },
 ];
@@ -160,6 +183,8 @@ export function chooseTemplate(industry: string | null): DemoTemplate {
   return GENERIC_TEMPLATE;
 }
 
+export type TrustPoint = { title: string; body: string };
+
 /**
  * Structured, render-ready content for a demo draft. Every field is either
  * generic template copy or a real value from the lead/research — nothing about
@@ -169,10 +194,20 @@ export type DemoContent = {
   template: DemoTemplate;
   businessName: string;
   location: string | null;
+  /** Eyebrow line above the headline, e.g. "Malerbetrieb · Düsseldorf". */
+  eyebrow: string;
   heroHeadline: string;
-  heroSubhead: string;
+  heroPitch: string;
+  /** Short generic, location-aware value chips shown under the hero. */
+  valueProps: string[];
+  serviceIntro: string;
   /** Industry-typical services (template-provided, framed as "to confirm"). */
   services: string[];
+  trustHeading: string;
+  /** Generic, process-focused trust points — never fabricated credentials. */
+  trustPoints: TrustPoint[];
+  ctaHeading: string;
+  ctaBody: string;
   contact: {
     phone: string | null;
     email: string | null;
@@ -189,17 +224,46 @@ export function buildDemoContent(
   template: DemoTemplate
 ): DemoContent {
   const location = lead.location?.trim() || null;
-  const heroSubhead = location
-    ? `Ihr ${template.trade} in ${location}. ${template.tagline}`
-    : `${template.trade} aus der Region. ${template.tagline}`;
+  const regionLabel = location ? `${location} und Umgebung` : "Ihre Region";
+
+  const valueProps = [
+    location ? `Aus ${location} und Umgebung` : "Aus Ihrer Region",
+    "Persönliche Beratung",
+    "Unkomplizierte Terminabsprache",
+  ];
+
+  const trustPoints: TrustPoint[] = [
+    {
+      title: "Direkter Kontakt",
+      body: "Ihre Anfrage geht direkt an den Betrieb – persönlich und ohne Umwege.",
+    },
+    {
+      title: "Klare Absprachen",
+      body: "Ablauf, Termine und Umfang besprechen wir vorab verständlich und transparent.",
+    },
+    {
+      title: "Lokal verankert",
+      body: location
+        ? `Ein Betrieb aus ${location}, der die Region und ihre Anforderungen kennt.`
+        : "Ein regionaler Betrieb, der Ihre Region und ihre Anforderungen kennt.",
+    },
+  ];
 
   return {
     template,
     businessName: lead.business_name,
     location,
+    eyebrow: location ? `${template.trade} · ${location}` : template.trade,
     heroHeadline: lead.business_name,
-    heroSubhead,
+    heroPitch: template.heroPitch,
+    valueProps,
+    serviceIntro: `Branchentypische Leistungen eines ${template.trade}s in ${regionLabel}. Die konkreten Angebote stimmen wir nach Freigabe gemeinsam ab.`,
     services: template.typicalServices,
+    trustHeading: "Was Sie erwarten können",
+    trustPoints,
+    ctaHeading: "Jetzt unverbindlich anfragen",
+    ctaBody:
+      "Schildern Sie kurz Ihr Anliegen – Sie erhalten eine persönliche Rückmeldung.",
     contact: {
       phone: lead.phone?.trim() || null,
       email: lead.email?.trim() || null,
