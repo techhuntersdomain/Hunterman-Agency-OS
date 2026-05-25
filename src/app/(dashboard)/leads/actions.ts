@@ -96,6 +96,63 @@ export async function updateLeadStatus(
 }
 
 /**
+ * Updates a lead's editable details from the lead detail edit form.
+ * `business_name` is intentionally not editable here. Validates status and
+ * score before writing so the user gets a clean message instead of a DB error.
+ */
+export async function updateLead(
+  id: string,
+  formData: FormData
+): Promise<ActionResult> {
+  if (!id) return { ok: false, error: "Missing lead id." };
+
+  const status = formData.get("status");
+  if (typeof status !== "string" || !LEAD_STATUSES.includes(status as LeadStatus)) {
+    return { ok: false, error: "Invalid or missing status." };
+  }
+
+  let score: number | null = null;
+  const scoreRaw = formData.get("score");
+  if (typeof scoreRaw === "string" && scoreRaw.trim() !== "") {
+    const n = Number(scoreRaw);
+    if (!Number.isInteger(n) || n < 0 || n > 100) {
+      return {
+        ok: false,
+        error: "Score must be a whole number between 0 and 100.",
+      };
+    }
+    score = n;
+  }
+
+  const updates: Database["public"]["Tables"]["leads"]["Update"] = {
+    contact_name: field(formData, "contact_name"),
+    email: field(formData, "email"),
+    phone: field(formData, "phone"),
+    website: field(formData, "website"),
+    industry: field(formData, "industry"),
+    location: field(formData, "location"),
+    status: status as LeadStatus,
+    score,
+    notes: field(formData, "notes"),
+  };
+
+  try {
+    const supabase = createAdminClient();
+    const { error } = await supabase.from("leads").update(updates).eq("id", id);
+    if (error) return { ok: false, error: error.message };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Failed to update lead.",
+    };
+  }
+
+  revalidatePath(`/leads/${id}`);
+  refreshLeadsViews();
+  return { ok: true };
+}
+
+/**
  * Permanently deletes a lead. The schema has no soft-delete/`archived` column;
  * to archive instead of delete, set the lead's status to `dormant`.
  */
