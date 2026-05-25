@@ -262,8 +262,9 @@ export async function runLeadResearch(id: string): Promise<ActionResult> {
     }
     return failWith(msg);
   }
+  let researcherStepId: string | null = null;
   if (workflowId) {
-    await addWorkflowStep(supabase, {
+    researcherStepId = await addWorkflowStep(supabase, {
       workflowId,
       stepName: "business-researcher",
       stepOrder: 1,
@@ -326,6 +327,9 @@ export async function runLeadResearch(id: string): Promise<ActionResult> {
       competitors: findings.competitors,
       market_notes: findings.market_notes,
       tech_stack: findings.tech_stack,
+      // Queryable link to the run that produced this record (null if untracked).
+      workflow_id: workflowId,
+      workflow_step_id: researcherStepId,
     };
   await supabase.from("business_research").delete().eq("lead_id", id);
   const { data: researchInserted, error: researchError } = await supabase

@@ -106,9 +106,21 @@ export interface Database {
           competitors: Json;
           market_notes: string | null;
           tech_stack: Json;
+          /** Workflow run that produced this record (null for legacy/manual rows). */
+          workflow_id: string | null;
+          /** The business-researcher step within that workflow, where known. */
+          workflow_step_id: string | null;
           researched_at: string;
         };
-        Insert: Omit<Database["public"]["Tables"]["business_research"]["Row"], "id" | "researched_at">;
+        // workflow_id / workflow_step_id are optional on insert — they're
+        // nullable and only set when a research run is tracked by a workflow.
+        Insert: Omit<
+          Database["public"]["Tables"]["business_research"]["Row"],
+          "id" | "researched_at" | "workflow_id" | "workflow_step_id"
+        > & {
+          workflow_id?: string | null;
+          workflow_step_id?: string | null;
+        };
         Update: Partial<Database["public"]["Tables"]["business_research"]["Insert"]>;
         Relationships: [];
       };

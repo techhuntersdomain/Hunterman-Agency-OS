@@ -102,7 +102,10 @@ export async function createWorkflow(
   return data.id;
 }
 
-/** Inserts a single workflow_step record. Best-effort (errors are swallowed). */
+/**
+ * Inserts a single workflow_step record and returns its id (null on failure).
+ * Best-effort — callers treat a null id as "step not tracked" and continue.
+ */
 export async function addWorkflowStep(
   supabase: Db,
   args: {
@@ -116,7 +119,7 @@ export async function addWorkflowStep(
     startedAt: string;
     completedAt: string | null;
   }
-): Promise<void> {
+): Promise<string | null> {
   const row: Database["public"]["Tables"]["workflow_steps"]["Insert"] = {
     workflow_id: args.workflowId,
     step_name: args.stepName,
@@ -128,7 +131,13 @@ export async function addWorkflowStep(
     started_at: args.startedAt,
     completed_at: args.completedAt,
   };
-  await supabase.from("workflow_steps").insert(row);
+  const { data, error } = await supabase
+    .from("workflow_steps")
+    .insert(row)
+    .select("id")
+    .single();
+  if (error || !data) return null;
+  return data.id;
 }
 
 /** Marks a workflow finished (completed/failed) with completion time + metadata. */
