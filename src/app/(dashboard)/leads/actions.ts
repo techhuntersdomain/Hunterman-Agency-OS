@@ -12,9 +12,22 @@ import {
 } from "@/lib/workflows";
 import { chooseTemplate, buildDemoContent } from "@/lib/demo-templates";
 import { buildOutreachDraft } from "@/lib/outreach-writer";
+import { getCurrentUser } from "@/lib/auth";
 import type { Database, Json, LeadStatus } from "@/types/database";
 
 export type ActionResult = { ok: boolean; error?: string };
+
+/**
+ * Auth guard for Server Actions. These actions use the service-role admin
+ * client, which bypasses RLS — so they MUST verify the request is
+ * authenticated themselves rather than relying on the proxy (Next.js routes
+ * Server Actions as POSTs to the page, and a proxy matcher change could
+ * silently drop coverage). Returns an error string when not signed in.
+ */
+async function ensureAuthed(): Promise<string | null> {
+  const user = await getCurrentUser();
+  return user ? null : "You must be signed in to do that.";
+}
 
 const LEAD_STATUSES: LeadStatus[] = [
   "new",
@@ -57,6 +70,9 @@ function refreshLeadsViews() {
 
 /** Creates a lead from the Add Lead form. */
 export async function createLead(formData: FormData): Promise<ActionResult> {
+  const authError = await ensureAuthed();
+  if (authError) return { ok: false, error: authError };
+
   const business_name = field(formData, "business_name");
   if (!business_name) {
     return { ok: false, error: "Business name is required." };
@@ -95,6 +111,9 @@ export async function updateLeadStatus(
   id: string,
   status: LeadStatus
 ): Promise<ActionResult> {
+  const authError = await ensureAuthed();
+  if (authError) return { ok: false, error: authError };
+
   if (!id) return { ok: false, error: "Missing lead id." };
   if (!LEAD_STATUSES.includes(status)) {
     return { ok: false, error: `Invalid status: ${status}` };
@@ -127,6 +146,9 @@ export async function updateLead(
   id: string,
   formData: FormData
 ): Promise<ActionResult> {
+  const authError = await ensureAuthed();
+  if (authError) return { ok: false, error: authError };
+
   if (!id) return { ok: false, error: "Missing lead id." };
 
   const status = formData.get("status");
@@ -180,6 +202,9 @@ export async function updateLead(
  * to archive instead of delete, set the lead's status to `dormant`.
  */
 export async function deleteLead(id: string): Promise<ActionResult> {
+  const authError = await ensureAuthed();
+  if (authError) return { ok: false, error: authError };
+
   if (!id) return { ok: false, error: "Missing lead id." };
 
   try {
@@ -209,6 +234,9 @@ export async function deleteLead(id: string): Promise<ActionResult> {
  * seeded), the core research/score/persist path still completes unchanged.
  */
 export async function runLeadResearch(id: string): Promise<ActionResult> {
+  const authError = await ensureAuthed();
+  if (authError) return { ok: false, error: authError };
+
   if (!id) return { ok: false, error: "Missing lead id." };
 
   let supabase: ReturnType<typeof createAdminClient>;
@@ -405,6 +433,9 @@ export async function runLeadResearch(id: string): Promise<ActionResult> {
  * the draft renders from real lead/research data + generic template copy.
  */
 export async function createDemoDraft(id: string): Promise<ActionResult> {
+  const authError = await ensureAuthed();
+  if (authError) return { ok: false, error: authError };
+
   if (!id) return { ok: false, error: "Missing lead id." };
 
   let supabase: ReturnType<typeof createAdminClient>;
@@ -544,6 +575,9 @@ export async function createDemoDraft(id: string): Promise<ActionResult> {
  * until manually approved/sent later.
  */
 export async function createOutreachDraft(id: string): Promise<ActionResult> {
+  const authError = await ensureAuthed();
+  if (authError) return { ok: false, error: authError };
+
   if (!id) return { ok: false, error: "Missing lead id." };
 
   let supabase: ReturnType<typeof createAdminClient>;
@@ -700,6 +734,9 @@ export async function updateOutreachDraft(
   messageId: string,
   formData: FormData
 ): Promise<ActionResult> {
+  const authError = await ensureAuthed();
+  if (authError) return { ok: false, error: authError };
+
   if (!messageId) return { ok: false, error: "Missing message id." };
 
   const body = field(formData, "body");
@@ -781,6 +818,9 @@ export async function updateOutreachDraft(
 export async function approveOutreachDraft(
   messageId: string
 ): Promise<ActionResult> {
+  const authError = await ensureAuthed();
+  if (authError) return { ok: false, error: authError };
+
   if (!messageId) return { ok: false, error: "Missing message id." };
 
   let supabase: ReturnType<typeof createAdminClient>;

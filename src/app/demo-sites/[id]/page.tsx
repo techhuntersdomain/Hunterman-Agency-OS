@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getDemoSiteDetail } from "@/lib/demo-sites";
 import { getTemplate, buildDemoContent } from "@/lib/demo-templates";
 import { DemoLanding } from "@/components/modules/demo-landing";
+import { requireUser } from "@/lib/auth";
 
 // Read live from Supabase on every request.
 export const dynamic = "force-dynamic";
@@ -17,6 +18,10 @@ export default async function DemoSitePreviewPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  // Internal-only preview — require a signed-in user (defense in depth beyond
+  // the proxy, since this route is outside the dashboard layout's guard).
+  await requireUser();
+
   const { id } = await params;
   const { demoSite, lead, research, error } = await getDemoSiteDetail(id);
 

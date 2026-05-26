@@ -4,11 +4,14 @@ import type { Database } from "@/types/database";
 /**
  * Server-only Supabase client using the service-role key.
  *
- * Phase 1.5 has no auth/login yet, and the schema's RLS policies only grant
- * access to the `authenticated` role. Reads/writes therefore go through the
- * server with the service-role key, which bypasses RLS. This key must never
- * reach the browser — only import this module from Server Components, Server
- * Actions, or Route Handlers.
+ * App-level auth (see `proxy.ts` + `requireUser()`) gates who reaches the
+ * server; data access then runs with the service-role key, which bypasses the
+ * (broad, authenticated-only) RLS policies. This key must never reach the
+ * browser — only import this module from Server Components, Server Actions, or
+ * Route Handlers, all of which verify the request is authenticated first.
+ *
+ * v1 is single-user / trusted-internal: RLS is permissive and there is no
+ * per-user ownership yet. See SUPABASE_SETUP.md → "How auth & data access works".
  */
 
 const URL_VAR = "NEXT_PUBLIC_SUPABASE_URL";

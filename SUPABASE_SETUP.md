@@ -89,15 +89,53 @@ which environment variables are missing. Fix those and click **Re-run test**.
 
 ---
 
-## How data access works (Phase 1.5)
+## 7. Create your login user (required)
 
-There is no login/auth yet. The schema's Row Level Security (RLS) policies only
-grant access to the `authenticated` role, so the public `anon` key cannot read
-or write leads on its own.
+The app now requires authentication — every route redirects to `/login` until
+you sign in. Create your user once in the Supabase dashboard:
 
-For now, all reads and writes happen **on the server** (Server Components and
-Server Actions) using the `service_role` key, which bypasses RLS. The
-`service_role` key is read only on the server and is never sent to the browser.
+1. Open **Authentication → Users** in the left sidebar.
+2. Click **Add user → Create new user**.
+3. Enter your **email** and a **password**.
+4. Enable **Auto Confirm User** (so you can sign in immediately without an email
+   confirmation step). Click **Create user**.
 
-When real authentication is added later, the app can switch to the `anon` key
-with per-user RLS — no schema change required.
+Then run `npm run dev`, open **http://localhost:3000**, and you'll be sent to
+**/login**. Sign in with that email/password to reach the dashboard.
+
+> Email confirmation: if you didn't auto-confirm, go to **Authentication →
+> Providers → Email** and either confirm the user manually or disable "Confirm
+> email" for this internal tool.
+
+To add another internal user later, repeat step 7 — any confirmed user can sign
+in (see the access model below).
+
+---
+
+## How auth & data access works
+
+**Authentication (Supabase Auth, email/password).** A Next.js `proxy.ts`
+(Next 16's renamed `middleware`) refreshes the session on every request and
+redirects anonymous traffic to `/login`. The dashboard layout additionally
+calls `requireUser()` server-side, and every Server Action re-checks auth — so
+unauthenticated users cannot read pages or invoke actions.
+
+**Data access.** All reads and writes happen **on the server** (Server
+Components and Server Actions) using the `service_role` key, which bypasses
+RLS. The `service_role` key is read only on the server and is never sent to the
+browser. The browser only ever uses the public `anon` key, and only for the
+sign-in call.
+
+### What is broad / single-user (v1 limitation)
+
+- **RLS is permissive.** Every table has a single policy — `Authenticated
+  access`: `ALL` for the `authenticated` role with `USING (true)`. So *any*
+  signed-in user has full read/write to *all* rows. There is **no per-user
+  ownership or role system yet**.
+- Because the server uses the `service_role` key, RLS is not the active
+  enforcement layer today — app-level auth (proxy + layout + action guards) is.
+  RLS remains the backstop and stays broad-authenticated.
+- This is intentional for **single-user / trusted-internal-team** use. Before
+  opening the tool to untrusted or multi-tenant users, add per-user RLS
+  (ownership columns + `auth.uid()` policies) and/or a role system. No schema
+  change is required to *enable* auth — only to *scope* data per user.
