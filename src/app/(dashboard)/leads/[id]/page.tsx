@@ -16,6 +16,7 @@ import { statusColors, formatStatus } from "@/lib/lead-status";
 import { EditLeadDialog } from "./edit-lead-dialog";
 import { RunResearchButton } from "./run-research-button";
 import { CreateDemoDraftButton } from "./create-demo-draft-button";
+import { CreateOutreachDraftButton } from "./create-outreach-draft-button";
 
 // Read live from Supabase on every request.
 export const dynamic = "force-dynamic";
@@ -36,6 +37,22 @@ const stepStatusColors: Record<string, string> = {
   failed: "bg-red-100 text-red-700",
   skipped: "bg-gray-100 text-gray-700",
 };
+
+const outreachStatusColors: Record<string, string> = {
+  draft: "bg-slate-100 text-slate-700",
+  scheduled: "bg-amber-100 text-amber-700",
+  sent: "bg-blue-100 text-blue-700",
+  delivered: "bg-blue-100 text-blue-700",
+  opened: "bg-emerald-100 text-emerald-700",
+  replied: "bg-emerald-100 text-emerald-700",
+  bounced: "bg-red-100 text-red-700",
+};
+
+/** Short single-line preview of a draft body (newlines collapsed). */
+function bodyPreview(body: string, max = 180): string {
+  const flat = body.replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max).trimEnd()}…` : flat;
+}
 
 function fmtDate(value: string | null): string {
   if (!value) return "—";
@@ -176,9 +193,10 @@ export default async function LeadDetailPage({
             {lead.score !== null ? ` · Score ${lead.score}/100` : ""}
           </p>
         </div>
-        <div className="flex items-start gap-2">
+        <div className="flex flex-wrap items-start justify-end gap-2">
           <RunResearchButton leadId={lead.id} />
           <CreateDemoDraftButton leadId={lead.id} />
+          <CreateOutreachDraftButton leadId={lead.id} />
           <EditLeadDialog lead={lead} />
         </div>
       </div>
@@ -343,28 +361,37 @@ export default async function LeadDetailPage({
         count={outreachMessages.length}
         empty="No outreach messages for this lead yet."
       >
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Channel</TableHead>
-              <TableHead>Subject</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Created</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {outreachMessages.map((m) => (
-              <TableRow key={m.id}>
-                <TableCell className="text-sm">{m.channel}</TableCell>
-                <TableCell className="text-sm">{m.subject || "—"}</TableCell>
-                <TableCell className="text-sm">{m.status}</TableCell>
-                <TableCell className="text-sm text-muted-foreground">
-                  {fmtDate(m.created_at)}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <ul className="space-y-3">
+          {outreachMessages.map((m) => (
+            <li key={m.id} className="rounded-md border p-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium">
+                  {m.subject || "(kein Betreff)"}
+                </span>
+                <Badge
+                  variant="secondary"
+                  className={cn(outreachStatusColors[m.status])}
+                >
+                  {m.status}
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {m.channel} · {fmtDate(m.created_at)}
+              </p>
+              <p className="text-sm mt-2 text-muted-foreground">
+                {bodyPreview(m.body)}
+              </p>
+              <details className="mt-2">
+                <summary className="text-xs underline cursor-pointer">
+                  Vollständigen Entwurf anzeigen
+                </summary>
+                <pre className="mt-2 whitespace-pre-wrap rounded-md bg-muted p-3 text-sm font-sans">
+                  {m.body}
+                </pre>
+              </details>
+            </li>
+          ))}
+        </ul>
       </RelatedCard>
 
       {/* Workflows & Activity */}

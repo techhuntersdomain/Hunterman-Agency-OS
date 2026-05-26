@@ -11,6 +11,7 @@ import {
   finishWorkflow,
 } from "@/lib/workflows";
 import { chooseTemplate, buildDemoContent } from "@/lib/demo-templates";
+import { buildOutreachDraft } from "@/lib/outreach-writer";
 import type { Database, Json, LeadStatus } from "@/types/database";
 
 export type ActionResult = { ok: boolean; error?: string };
@@ -515,6 +516,161 @@ export async function createDemoDraft(id: string): Promise<ActionResult> {
       pipeline: "demo-draft",
       template: template.slug,
       demo_site_id: demoSiteId,
+    });
+  }
+
+  revalidatePath(`/leads/${id}`);
+  refreshLeadsViews();
+  return { ok: true };
+}
+
+/**
+ * Creates a v1 outreach *draft* for a lead: writes a short, honest German email
+ * from the lead's data, latest research, and latest ready demo draft, and saves
+ * it to `outreach_messages` with status `draft`. Tracked in the workflow layer
+ * (workflow + outreach-writer step) and activity_log. Internal-only — nothing
+ * is sent, no email/Gmail integration, no follow-up. The draft stays a draft
+ * until manually approved/sent later.
+ */
+export async function createOutreachDraft(id: string): Promise<ActionResult> {
+  if (!id) return { ok: false, error: "Missing lead id." };
+
+  let supabase: ReturnType<typeof createAdminClient>;
+  try {
+    supabase = createAdminClient();
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Supabase is not configured.",
+    };
+  }
+
+  // 1. Fetch the lead.
+  const { data: lead, error: leadError } = await supabase
+    .from("leads")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (leadError) return { ok: false, error: leadError.message };
+  if (!lead) return { ok: false, error: "Lead not found." };
+
+  // 2. Fetch latest research + latest ready demo draft (both optional context).
+  const { data: research } = await supabase
+    .from("business_research")
+    .select("*")
+    .eq("lead_id", id)
+    .order("researched_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const { data: demoSite } = await supabase
+    .from("demo_sites")
+    .select("*")
+    .eq("lead_id", id)
+    .eq("status", "ready")
+    .order("generated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  // 3. Generate the draft (deterministic, honest, real-data only).
+  const draft = buildOutreachDraft(lead, research ?? null, demoSite ?? null);
+
+  // 4. Open a workflow for this run (best-effort; null if it can't be created).
+  const moduleId = await getModuleIdBySlug(supabase, "local-growth");
+  const workflowId = moduleId
+    ? await createWorkflow(supabase, {
+        moduleId,
+        leadId: id,
+        name: `Outreach Draft — ${lead.business_name}`,
+        metadata: { trigger: "manual", pipeline: "outreach-draft" },
+      })
+    : null;
+
+  async function failWith(error: string): Promise<ActionResult> {
+    if (workflowId) {
+      await finishWorkflow(supabase, workflowId, "failed", {
+        trigger: "manual",
+        pipeline: "outreach-draft",
+        error,
+      });
+    }
+    return { ok: false, error };
+  }
+
+  // 5. Step 1 — outreach-writer.
+  const s1Start = new Date().toISOString();
+  let writerStepId: string | null = null;
+  if (workflowId) {
+    writerStepId = await addWorkflowStep(supabase, {
+      workflowId,
+      stepName: "outreach-writer",
+      stepOrder: 1,
+      agentType: "outreach-writer",
+      status: "completed",
+      input: {
+        lead_id: id,
+        channel: "email",
+        used_research: Boolean(research),
+        used_demo: Boolean(demoSite),
+      },
+      output: {
+        subject: draft.subject,
+        channel: "email",
+        based_on: draft.basedOn,
+        demo_site_id: demoSite?.id ?? null,
+      } as Json,
+      startedAt: s1Start,
+      completedAt: new Date().toISOString(),
+    });
+  }
+
+  // 6. Insert the outreach message as a draft (no sending).
+  const outreachRow: Database["public"]["Tables"]["outreach_messages"]["Insert"] =
+    {
+      lead_id: id,
+      workflow_id: workflowId,
+      channel: "email",
+      subject: draft.subject,
+      body: draft.body,
+      status: "draft",
+      scheduled_for: null,
+      sent_at: null,
+      opened_at: null,
+      replied_at: null,
+    };
+  const { data: outreachInserted, error: outreachError } = await supabase
+    .from("outreach_messages")
+    .insert(outreachRow)
+    .select("id")
+    .single();
+  if (outreachError) return failWith(outreachError.message);
+  const outreachId = outreachInserted?.id ?? null;
+
+  // 7. Log the run (best-effort).
+  const activityRow: Database["public"]["Tables"]["activity_log"]["Insert"] = {
+    entity_type: "lead",
+    entity_id: id,
+    action: "outreach_draft_created",
+    actor: "outreach-writer",
+    details: {
+      channel: "email",
+      subject: draft.subject,
+      outreach_message_id: outreachId,
+      demo_site_id: demoSite?.id ?? null,
+      workflow_id: workflowId,
+      workflow_step_id: writerStepId,
+    },
+  };
+  await supabase.from("activity_log").insert(activityRow);
+
+  // 8. Close the workflow, linking the produced draft.
+  if (workflowId) {
+    await finishWorkflow(supabase, workflowId, "completed", {
+      trigger: "manual",
+      pipeline: "outreach-draft",
+      channel: "email",
+      subject: draft.subject,
+      outreach_message_id: outreachId,
     });
   }
 
