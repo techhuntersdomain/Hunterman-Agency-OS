@@ -13,11 +13,10 @@ import {
 import { cn } from "@/lib/utils";
 import { getLeadDetail } from "@/lib/leads";
 import { statusColors, formatStatus } from "@/lib/lead-status";
+import { derivePipeline } from "@/lib/pipeline-stages";
 import { EditLeadDialog } from "./edit-lead-dialog";
-import { RunResearchButton } from "./run-research-button";
-import { CreateDemoDraftButton } from "./create-demo-draft-button";
-import { CreateOutreachDraftButton } from "./create-outreach-draft-button";
 import { OutreachDraftActions } from "./outreach-draft-actions";
+import { PipelinePanel } from "./pipeline-panel";
 
 // Read live from Supabase on every request.
 export const dynamic = "force-dynamic";
@@ -190,11 +189,19 @@ export default async function LeadDetailPage({
   // Lets the Demo Sites table show the linked workflow's status, when present.
   const workflowById = new Map(workflows.map((w) => [w.id, w]));
 
+  // Pipeline readiness derived from the lead's real records (no fake data).
+  const pipeline = derivePipeline({
+    lead,
+    research,
+    demoSites,
+    outreachMessages,
+  });
+
   return (
     <div className="space-y-6">
       <BackLink />
 
-      {/* Header */}
+      {/* Header — pipeline actions live in the Pipeline panel below. */}
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
@@ -212,12 +219,12 @@ export default async function LeadDetailPage({
           </p>
         </div>
         <div className="flex flex-wrap items-start justify-end gap-2">
-          <RunResearchButton leadId={lead.id} />
-          <CreateDemoDraftButton leadId={lead.id} />
-          <CreateOutreachDraftButton leadId={lead.id} />
           <EditLeadDialog lead={lead} />
         </div>
       </div>
+
+      {/* Pipeline readiness + guided next action */}
+      <PipelinePanel lead={lead} summary={pipeline} />
 
       {/* Overview */}
       <Card>
@@ -374,6 +381,7 @@ export default async function LeadDetailPage({
       </RelatedCard>
 
       {/* Outreach Messages */}
+      <div id="outreach" className="scroll-mt-6">
       <RelatedCard
         title="Outreach Messages"
         count={outreachMessages.length}
@@ -422,6 +430,7 @@ export default async function LeadDetailPage({
           ))}
         </ul>
       </RelatedCard>
+      </div>
 
       {/* Workflows & Activity */}
       <Card>
@@ -430,7 +439,16 @@ export default async function LeadDetailPage({
         </CardHeader>
         <CardContent className="space-y-6">
           <div>
-            <h4 className="text-sm font-medium mb-2">Workflows</h4>
+            <div className="mb-2 flex items-baseline justify-between gap-2">
+              <h4 className="text-sm font-medium">
+                Workflows{workflows.length > 0 ? ` (${workflows.length})` : ""}
+              </h4>
+              {workflows.length > 1 && (
+                <span className="text-xs text-muted-foreground">
+                  Latest first
+                </span>
+              )}
+            </div>
             {workflows.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 No workflows for this lead yet.
@@ -447,7 +465,7 @@ export default async function LeadDetailPage({
                           variant="secondary"
                           className={cn(workflowStatusColors[w.status])}
                         >
-                          {w.status}
+                          {formatStatus(w.status)}
                         </Badge>
                       </div>
                       <p className="text-xs text-muted-foreground mt-0.5">
@@ -476,7 +494,7 @@ export default async function LeadDetailPage({
                                 variant="secondary"
                                 className={cn(stepStatusColors[s.status])}
                               >
-                                {s.status}
+                                {formatStatus(s.status)}
                               </Badge>
                             </li>
                           ))}
@@ -490,20 +508,32 @@ export default async function LeadDetailPage({
           </div>
 
           <div>
-            <h4 className="text-sm font-medium mb-2">Recent Activity</h4>
+            <h4 className="mb-2 text-sm font-medium">
+              Recent Activity{activity.length > 0 ? ` (${activity.length})` : ""}
+            </h4>
             {activity.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 No activity logged for this lead yet.
               </p>
             ) : (
-              <ul className="space-y-1 text-sm">
+              <ul className="divide-y rounded-md border text-sm">
                 {activity.map((a) => (
-                  <li key={a.id} className="flex justify-between gap-4">
+                  <li
+                    key={a.id}
+                    className="flex justify-between gap-4 px-3 py-1.5"
+                  >
                     <span>
-                      {a.action}
-                      {a.actor ? ` · ${a.actor}` : ""}
+                      <span className="font-medium">
+                        {formatStatus(a.action)}
+                      </span>
+                      {a.actor ? (
+                        <span className="text-muted-foreground">
+                          {" "}
+                          · {a.actor}
+                        </span>
+                      ) : null}
                     </span>
-                    <span className="text-muted-foreground whitespace-nowrap">
+                    <span className="whitespace-nowrap text-muted-foreground">
                       {fmtDate(a.created_at)}
                     </span>
                   </li>
