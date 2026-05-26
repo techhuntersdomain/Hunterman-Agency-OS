@@ -17,6 +17,7 @@ import { EditLeadDialog } from "./edit-lead-dialog";
 import { RunResearchButton } from "./run-research-button";
 import { CreateDemoDraftButton } from "./create-demo-draft-button";
 import { CreateOutreachDraftButton } from "./create-outreach-draft-button";
+import { OutreachDraftActions } from "./outreach-draft-actions";
 
 // Read live from Supabase on every request.
 export const dynamic = "force-dynamic";
@@ -40,12 +41,29 @@ const stepStatusColors: Record<string, string> = {
 
 const outreachStatusColors: Record<string, string> = {
   draft: "bg-slate-100 text-slate-700",
-  scheduled: "bg-amber-100 text-amber-700",
+  scheduled: "bg-emerald-100 text-emerald-700",
   sent: "bg-blue-100 text-blue-700",
   delivered: "bg-blue-100 text-blue-700",
   opened: "bg-emerald-100 text-emerald-700",
   replied: "bg-emerald-100 text-emerald-700",
   bounced: "bg-red-100 text-red-700",
+};
+
+/** Human-readable badge label for an outreach status (clarifies the gate). */
+const outreachStatusLabel: Record<string, string> = {
+  draft: "Draft · not approved",
+  scheduled: "Approved · ready to send",
+  sent: "Sent",
+  delivered: "Delivered",
+  opened: "Opened",
+  replied: "Replied",
+  bounced: "Bounced",
+};
+
+/** One-line explanation shown under each message, per status. */
+const outreachStatusHint: Record<string, string> = {
+  draft: "Not approved yet. Edit it, then approve when it's ready.",
+  scheduled: "Approved and ready to send later. Nothing has been sent yet.",
 };
 
 /** Short single-line preview of a draft body (newlines collapsed). */
@@ -361,6 +379,11 @@ export default async function LeadDetailPage({
         count={outreachMessages.length}
         empty="No outreach messages for this lead yet."
       >
+        <p className="mb-3 text-xs text-muted-foreground">
+          Draft means not approved. Approved messages move to{" "}
+          <span className="font-medium">ready to send</span>. Nothing is ever
+          sent from here — there is no send action yet.
+        </p>
         <ul className="space-y-3">
           {outreachMessages.map((m) => (
             <li key={m.id} className="rounded-md border p-3">
@@ -372,12 +395,17 @@ export default async function LeadDetailPage({
                   variant="secondary"
                   className={cn(outreachStatusColors[m.status])}
                 >
-                  {m.status}
+                  {outreachStatusLabel[m.status] ?? m.status}
                 </Badge>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
                 {m.channel} · {fmtDate(m.created_at)}
               </p>
+              {outreachStatusHint[m.status] && (
+                <p className="text-xs text-muted-foreground mt-1 italic">
+                  {outreachStatusHint[m.status]}
+                </p>
+              )}
               <p className="text-sm mt-2 text-muted-foreground">
                 {bodyPreview(m.body)}
               </p>
@@ -389,6 +417,7 @@ export default async function LeadDetailPage({
                   {m.body}
                 </pre>
               </details>
+              <OutreachDraftActions message={m} />
             </li>
           ))}
         </ul>

@@ -28,6 +28,17 @@ const LEAD_STATUSES: LeadStatus[] = [
   "dormant",
 ];
 
+type OutreachChannel =
+  Database["public"]["Tables"]["outreach_messages"]["Row"]["channel"];
+
+const OUTREACH_CHANNELS: OutreachChannel[] = [
+  "email",
+  "sms",
+  "linkedin",
+  "phone",
+  "other",
+];
+
 /** Trims a FormData string field; returns null when empty. */
 function field(formData: FormData, name: string): string | null {
   const value = formData.get(name);
@@ -675,6 +686,204 @@ export async function createOutreachDraft(id: string): Promise<ActionResult> {
   }
 
   revalidatePath(`/leads/${id}`);
+  refreshLeadsViews();
+  return { ok: true };
+}
+
+/**
+ * Edits an outreach *draft* in place (subject, body, channel). Only messages
+ * still in `draft` status may be edited — once approved (`scheduled`) or beyond,
+ * the content is frozen. Internal-only: this never sends anything. Body is
+ * required; subject is optional; channel defaults to email.
+ */
+export async function updateOutreachDraft(
+  messageId: string,
+  formData: FormData
+): Promise<ActionResult> {
+  if (!messageId) return { ok: false, error: "Missing message id." };
+
+  const body = field(formData, "body");
+  if (!body) return { ok: false, error: "Message body is required." };
+  const subject = field(formData, "subject");
+
+  const channelRaw = formData.get("channel");
+  const channel = typeof channelRaw === "string" ? channelRaw : "email";
+  if (!OUTREACH_CHANNELS.includes(channel as OutreachChannel)) {
+    return { ok: false, error: `Invalid channel: ${channel}` };
+  }
+
+  let supabase: ReturnType<typeof createAdminClient>;
+  try {
+    supabase = createAdminClient();
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Supabase is not configured.",
+    };
+  }
+
+  // Guard: only drafts are editable. Fetch current state first.
+  const { data: message, error: fetchError } = await supabase
+    .from("outreach_messages")
+    .select("id, lead_id, status")
+    .eq("id", messageId)
+    .maybeSingle();
+  if (fetchError) return { ok: false, error: fetchError.message };
+  if (!message) return { ok: false, error: "Outreach message not found." };
+  if (message.status !== "draft") {
+    return {
+      ok: false,
+      error: "Only draft messages can be edited. This one is already approved.",
+    };
+  }
+
+  const updates: Database["public"]["Tables"]["outreach_messages"]["Update"] = {
+    subject,
+    body,
+    channel: channel as OutreachChannel,
+  };
+  const { error: updateError } = await supabase
+    .from("outreach_messages")
+    .update(updates)
+    .eq("id", messageId);
+  if (updateError) return { ok: false, error: updateError.message };
+
+  // Log the edit (best-effort).
+  const activityRow: Database["public"]["Tables"]["activity_log"]["Insert"] = {
+    entity_type: "lead",
+    entity_id: message.lead_id,
+    action: "outreach_draft_edited",
+    actor: "user",
+    details: {
+      outreach_message_id: messageId,
+      channel,
+      subject,
+    },
+  };
+  await supabase.from("activity_log").insert(activityRow);
+
+  revalidatePath(`/leads/${message.lead_id}`);
+  refreshLeadsViews();
+  return { ok: true };
+}
+
+/**
+ * Approves an outreach *draft*: moves it from `draft` to `scheduled`, the
+ * "approved / ready to send later" state. This is an approval gate only — it
+ * sends nothing, schedules no time (`scheduled_for` stays null), and adds no
+ * Gmail/email integration. Idempotency-guarded so only drafts can be approved.
+ *
+ * The approval is recorded in the workflow layer (a dedicated approval workflow
+ * + an `approval-gate` step) and activity_log, consistent with the other lead
+ * actions. Workflow tracking is best-effort; a failure there never blocks the
+ * approval.
+ */
+export async function approveOutreachDraft(
+  messageId: string
+): Promise<ActionResult> {
+  if (!messageId) return { ok: false, error: "Missing message id." };
+
+  let supabase: ReturnType<typeof createAdminClient>;
+  try {
+    supabase = createAdminClient();
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Supabase is not configured.",
+    };
+  }
+
+  // 1. Fetch the message + guard that it's still a draft.
+  const { data: message, error: fetchError } = await supabase
+    .from("outreach_messages")
+    .select("id, lead_id, status, subject, channel, workflow_id")
+    .eq("id", messageId)
+    .maybeSingle();
+  if (fetchError) return { ok: false, error: fetchError.message };
+  if (!message) return { ok: false, error: "Outreach message not found." };
+  if (message.status !== "draft") {
+    return {
+      ok: false,
+      error: `Only drafts can be approved (this one is "${message.status}").`,
+    };
+  }
+
+  // 2. Fetch the lead (for the workflow name; lead must still exist).
+  const { data: lead, error: leadError } = await supabase
+    .from("leads")
+    .select("id, business_name")
+    .eq("id", message.lead_id)
+    .maybeSingle();
+  if (leadError) return { ok: false, error: leadError.message };
+  if (!lead) return { ok: false, error: "Lead not found." };
+
+  // 3. Approve: draft -> scheduled (approved, NOT sent). No time is set.
+  const { error: updateError } = await supabase
+    .from("outreach_messages")
+    .update({ status: "scheduled" })
+    .eq("id", messageId)
+    .eq("status", "draft"); // re-assert the guard at write time
+  if (updateError) return { ok: false, error: updateError.message };
+
+  // 4. Track the approval in the workflow layer (best-effort).
+  const moduleId = await getModuleIdBySlug(supabase, "local-growth");
+  const workflowId = moduleId
+    ? await createWorkflow(supabase, {
+        moduleId,
+        leadId: message.lead_id,
+        name: `Outreach Approval — ${lead.business_name}`,
+        metadata: { trigger: "manual", pipeline: "outreach-approval" },
+      })
+    : null;
+
+  if (workflowId) {
+    const now = new Date().toISOString();
+    await addWorkflowStep(supabase, {
+      workflowId,
+      stepName: "approval-gate",
+      stepOrder: 1,
+      agentType: "user",
+      status: "completed",
+      input: {
+        outreach_message_id: messageId,
+        channel: message.channel,
+        subject: message.subject,
+        from_status: "draft",
+      },
+      output: {
+        to_status: "scheduled",
+        sent: false,
+        note: "Approved for sending later. Nothing has been sent.",
+      } as Json,
+      startedAt: now,
+      completedAt: now,
+    });
+    await finishWorkflow(supabase, workflowId, "completed", {
+      trigger: "manual",
+      pipeline: "outreach-approval",
+      outreach_message_id: messageId,
+      to_status: "scheduled",
+    });
+  }
+
+  // 5. Log the approval (best-effort).
+  const activityRow: Database["public"]["Tables"]["activity_log"]["Insert"] = {
+    entity_type: "lead",
+    entity_id: message.lead_id,
+    action: "outreach_draft_approved",
+    actor: "user",
+    details: {
+      outreach_message_id: messageId,
+      channel: message.channel,
+      subject: message.subject,
+      to_status: "scheduled",
+      sent: false,
+      workflow_id: workflowId,
+    },
+  };
+  await supabase.from("activity_log").insert(activityRow);
+
+  revalidatePath(`/leads/${message.lead_id}`);
   refreshLeadsViews();
   return { ok: true };
 }
